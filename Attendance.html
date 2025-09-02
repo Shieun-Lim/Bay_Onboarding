@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>출석관리 Attendance DApp(배포 후 15분 이내 정상 출석)</title>
+<script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.min.js"></script>
+<style>
+  :root { --bg:#0b0d12; --fg:#e8ebf2; --muted:#9aa3b2; --card:#131722; --acc:#6ea8fe; --warn:#ffcf5a; --err:#ff6b6b; --ok:#6edc82; }
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Segoe UI,Roboto}
+  .wrap{max-width:1000px;margin:32px auto;padding:0 16px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:1000px){.row{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid #22293a;border-radius:16px;padding:16px;box-shadow:0 8px 20px rgba(0,0,0,.3)}
+  h2,h3{margin:0 0 10px} h2{font-size:22px} h3{font-size:16px;color:var(--muted);font-weight:600}
+  button{background:var(--acc);color:#031033;border:0;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  input,textarea{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #2a3246;background:#0e131d;color:var(--fg)}
+  .small{font-size:12px;color:var(--muted)}
+  .pill{display:inline-block;padding:4px 8px;border-radius:999px;font-weight:700}
+  .pill.ok{background:rgba(110,220,130,.15);color:var(--ok)}
+  .pill.warn{background:rgba(255,207,90,.15);color:var(--warn)}
+  .pill.err{background:rgba(255,107,107,.15);color:var(--err)}
+  .kv{display:grid;grid-template-columns:160px 1fr;gap:8px;margin:8px 0}
+  .mono{font-family:ui-monospace, Menlo, Consolas, monospace}
+  .hr{height:1px;background:#1a2030;margin:12px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  pre{white-space:pre-wrap;word-break:break-word}
+  table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+  th,td{border:1px solid #20283a;padding:6px 8px;text-align:center}
+  th{background:#0f1626;color:#aab3c4;position:sticky;top:0}
+  td.tag{font-weight:700}
+  .tag.on{color:var(--ok)}
+  .tag.late{color:var(--warn)}
+  .tag.absent{color:var(--err)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h2>출석관리 Attendance DApp(배포 후 15분 이내 정상 출석)</h2>
+    <div class="grid2">
+      <div>
+        <button id="btnConnect">지갑 연결</button>
+        <div id="addr" class="small mono" style="margin-top:8px;">Not connected</div>
+      </div>
+      <div>
+        <div class="grid2">
+          <input id="contractAddress" placeholder="컨트랙트 주소 0x..." />
+          <button id="btnLoad">Load</button>
+        </div>
+        <div class="small" style="margin-top:6px">배포 주소를 넣고 Load 누르세요.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:16px">
+    <div class="card">
+      <h3>라운드 정보</h3>
+      <div class="kv"><div>stakeAmount</div><div id="stake">-</div></div>
+      <div class="kv"><div>requiredVerifiers</div><div id="req">-</div></div>
+      <div class="kv"><div>startTime</div><div id="start">-</div></div>
+      <div class="kv"><div>endTime</div><div id="end">-</div></div>
+      <div class="kv"><div>정시 창(초)</div><div id="winSec">-</div></div>
+      <div class="kv"><div>현재 상태</div><div id="statusPill">-</div></div>
+      <div class="kv"><div>남은 정시 시간</div><div id="leftActive">-</div></div>
+      <div class="kv"><div>라운드 종료까지</div><div id="leftRound">-</div></div>
+      <div class="kv"><div>현재 dayIndex</div><div id="dayIndex">-</div></div>
+      <div class="kv"><div>LATE 토큰</div><div id="lateAddr">-</div></div>
+    </div>
+
+    <div class="card">
+      <h3>내 상태 (오늘)</h3>
+      <div class="kv"><div>checkedIn</div><div id="meChecked">-</div></div>
+      <div class="kv"><div>late</div><div id="meLate">-</div></div>
+      <div class="kv"><div>absent</div><div id="meAbsent">-</div></div>
+      <div class="kv"><div>verifyCount</div><div id="meVerCnt">-</div></div>
+      <div class="hr"></div>
+      <div class="grid2">
+        <button id="btnRefreshMe">내 상태 새로고침</button>
+        <button id="btnTop3">Top3 미리보기</button>
+      </div>
+      <pre id="top3" class="small mono" style="margin-top:8px"></pre>
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:16px">
+    <div class="card">
+      <h3>Join (예치)</h3>
+      <div class="grid2">
+        <input id="stakeEth" placeholder="ETH" />
+        <button id="btnJoin">join()</button>
+      </div>
+      <div class="small" style="margin-top:6px">시작 전까지만 가능. 기본값은 컨트랙트의 stakeAmount로 자동 설정됩니다.</div>
+    </div>
+
+    <div class="card">
+      <h3>출석 / 지각 / 결석</h3>
+      <input id="reason" placeholder="사유(선택)" />
+      <div class="grid2" style="margin-top:8px">
+        <button id="btnOnTime">정시 checkIn(late=false)</button>
+        <button id="btnLate">지각 checkIn(late=true)</button>
+      </div>
+      <button id="btnAbsent" style="margin-top:8px;background:#f08c6c;">declareAbsent()</button>
+      <div class="small" style="margin-top:6px">
+        ※ 정시 버튼은 정시 창(15분) 안에서만 활성화. 창이 지나면 지각만 가능, 또는 결석 선언 가능.
+      </div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:16px">
+    <div class="card">
+      <h3>검증(Verify)</h3>
+      <div class="grid2">
+        <input id="verifyAddr" placeholder="attendee address" />
+        <button id="btnVerify">verify()</button>
+      </div>
+      <div class="small" style="margin-top:6px">출석(정시/지각)한 사람만 검증 가능. 자기 자신 검증 불가, 중복 검증 불가.</div>
+    </div>
+
+    <div class="card">
+      <h3>정산</h3>
+      <button id="btnFinalize">finalizeAndDistribute()</button>
+      <div class="small" style="margin-top:6px">라운드 종료 후 호출하세요.</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>기록(이벤트 로그) ▶ 참가자 × Day 테이블</h3>
+    <div class="grid2">
+      <button id="btnLoadRecords">기록 불러오기</button>
+      <div class="small">테스트넷에서는 전체 블록 스캔해도 부담이 적습니다.</div>
+    </div>
+    <div id="records" style="margin-top:10px; overflow:auto; max-height:420px;"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>로그</h3>
+    <pre id="log" class="mono small">-</pre>
+  </div>
+</div>
+
+<script>
+let provider, signer, me, contract, ca;
+const ABI = [
+  "event Joined(address indexed user)",
+  "event CheckedIn(address indexed user, uint256 indexed dayIndex, bool late, string reason)",
+  "event DeclaredAbsent(address indexed user, uint256 indexed dayIndex)",
+  "event Verified(address indexed attendee, address indexed verifier, uint256 indexed dayIndex, uint8 verifyCount)",
+  "function stakeAmount() view returns (uint256)",
+  "function requiredVerifiers() view returns (uint256)",
+  "function startTime() view returns (uint256)",
+  "function durationSec() view returns (uint256)",
+  "function activeWindowSec() view returns (uint256)",
+  "function endTime() view returns (uint256)",
+  "function isActiveWindow() view returns (bool)",
+  "function currentDayIndex() view returns (uint256)",
+  "function lateToken() view returns (address)",
+  "function join() payable",
+  "function checkIn(bool late, string reason)",
+  "function declareAbsent()",
+  "function verify(address attendee)",
+  "function getAttendance(address user, uint256 dayIndex) view returns (bool checkedIn, bool late, bool absent, uint8 verifyCount)",
+  "function previewTop3() view returns (address[3] winners, uint16[3] scores)",
+  "function finalizeAndDistribute()"
+];
+
+const el = id => document.getElementById(id);
+const log = (msg) => { el('log').textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + el('log').textContent; };
+const fmtETH = (bn) => ethers.utils.formatEther(bn || 0);
+const tsToStr = (ts) => ts ? new Date(ts * 1000).toLocaleString() : '-';
+const secLeft = (t) => Math.max(0, t - Math.floor(Date.now()/1000));
+const friendlyDur = (s) => { const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60; return `${h}h ${m}m ${ss}s`; };
+
+// ------- Wallet Connect (튼튼한 버전) -------
+async function showConnectedAddress() {
+  try {
+    if (!window.ethereum) return;
+    const accounts = await ethereum.request({ method: 'eth_accounts' });
+    if (accounts && accounts.length > 0) {
+      el('addr').textContent = 'Connected: ' + accounts[0];
+      me = accounts[0];
+      provider = new ethers.providers.Web3Provider(window.ethereum, 'any');
+      signer = provider.getSigner();
+    }
+  } catch {}
+}
+
+async function connectWallet() {
+  if (!window.ethereum) { alert('MetaMask가 필요합니다.'); return; }
+  try {
+    provider = new ethers.providers.Web3Provider(window.ethereum, 'any');
+    let accounts = await ethereum.request({ method: 'eth_accounts' });
+    if (!accounts || accounts.length === 0) {
+      accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+    }
+    signer = provider.getSigner();
+    me = accounts[0];
+    el('addr').textContent = 'Connected: ' + me;
+
+    // 이벤트: 계정/체인 바뀌면 UI 갱신
+    ethereum.removeAllListeners && ethereum.removeAllListeners('accountsChanged');
+    ethereum.on('accountsChanged', (acc) => {
+      el('addr').textContent = acc[0] ? ('Connected: ' + acc[0]) : 'Not connected';
+      me = acc[0] || null;
+    });
+    ethereum.removeAllListeners && ethereum.removeAllListeners('chainChanged');
+    ethereum.on('chainChanged', () => window.location.reload());
+  } catch (e) {
+    console.error(e);
+    alert(e?.data?.message || e?.message || String(e));
+  }
+}
+el('btnConnect').onclick = connectWallet;
+
+// 페이지 로드시 이미 연결돼 있으면 자동 표시
+document.addEventListener('DOMContentLoaded', showConnectedAddress);
+
+// ------- Contract Load & Info -------
+el('btnLoad').onclick = async () => {
+  try {
+    ca = el('contractAddress').value.trim();
+    if (!ethers.utils.isAddress(ca)) { alert('유효한 컨트랙트 주소가 아닙니다.'); return; }
+    const signerOrProv = signer || (provider || new ethers.providers.Web3Provider(window.ethereum));
+    contract = new ethers.Contract(ca, ABI, signerOrProv);
+    log('컨트랙트 연결 시도…');
+    await refreshContractInfo(true);
+    startPolling();
+  } catch (e) {
+    console.error(e); alert('컨트랙트 로드 실패'); log('컨트랙트 로드 실패: ' + (e.message || e));
+  }
+};
+
+async function refreshContractInfo(init=false) {
+  if (!contract) return;
+  const [stakeBn, req, st, et, win, active, token] = await Promise.all([
+    contract.stakeAmount(), contract.requiredVerifiers(),
+    contract.startTime(), contract.endTime(), contract.activeWindowSec(),
+    contract.isActiveWindow(), contract.lateToken()
+  ]);
+  el('stake').textContent = `${fmtETH(stakeBn)} ETH`;
+  el('req').textContent = req;
+  el('start').textContent = `${tsToStr(Number(st))} (${st})`;
+  el('end').textContent = `${tsToStr(Number(et))} (${et})`;
+  el('winSec').textContent = Number(win);
+
+  const now = Math.floor(Date.now()/1000);
+  const inEpoch = (now >= Number(st) && now < Number(et));
+  el('statusPill').innerHTML = active
+    ? `<span class="pill ok">정시 창 활성</span>`
+    : (inEpoch ? `<span class="pill warn">지각/결석만</span>` : `<span class="pill err">라운드 외</span>`);
+
+  const leftA = active ? secLeft(Number(st) + Number(win)) : 0;
+  const leftR = inEpoch ? secLeft(Number(et)) : 0;
+  el('leftActive').textContent = active ? friendlyDur(leftA) : '-';
+  el('leftRound').textContent = inEpoch ? friendlyDur(leftR) : '-';
+
+  try {
+    const di = await contract.currentDayIndex();
+    el('dayIndex').textContent = Number(di);
+  } catch { el('dayIndex').textContent = '-'; }
+
+  el('lateAddr').textContent = token;
+
+  if (init) el('stakeEth').value = fmtETH(stakeBn);
+  guardButtons(inEpoch);
+  if (me) await refreshMe();
+}
+
+function guardButtons(inEpoch) {
+  contract.isActiveWindow().then(active=>{
+    el('btnOnTime').disabled = !(active && inEpoch);
+    el('btnLate').disabled   = !inEpoch;
+    el('btnAbsent').disabled = !(inEpoch && !active);
+  }).catch(()=>{
+    el('btnOnTime').disabled = true;
+    el('btnLate').disabled   = true;
+    el('btnAbsent').disabled = true;
+  });
+}
+
+async function refreshMe() {
+  if (!contract) return;
+  try {
+    const di = await contract.currentDayIndex();
+    const res = await contract.getAttendance(me, di);
+    el('meChecked').textContent = res.checkedIn ? 'true' : 'false';
+    el('meLate').textContent    = res.late ? 'true' : 'false';
+    el('meAbsent').textContent  = res.absent ? 'true' : 'false';
+    el('meVerCnt').textContent  = Number(res.verifyCount);
+  } catch {
+    el('meChecked').textContent = el('meLate').textContent =
+    el('meAbsent').textContent = el('meVerCnt').textContent = '-';
+  }
+}
+
+let pollTimer;
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(() => refreshContractInfo(false).catch(()=>{}), 2000);
+}
+
+// ------- Actions -------
+el('btnJoin').onclick = async () => {
+  try {
+    const eth = el('stakeEth').value.trim();
+    const tx = await contract.connect(signer).join({ value: ethers.utils.parseEther(eth) });
+    log('join tx: ' + tx.hash);
+    await tx.wait(); log('join confirmed');
+    await refreshContractInfo();
+  } catch (e) { console.error(e); alert('join 실패: ' + (e.data?.message || e.message)); }
+};
+
+el('btnOnTime').onclick = async () => {
+  try {
+    const reason = el('reason').value || "";
+    const tx = await contract.connect(signer).checkIn(false, reason);
+    log('checkIn(on-time) tx: ' + tx.hash);
+    await tx.wait(); log('checkIn(on-time) confirmed');
+    await refreshContractInfo();
+  } catch (e) { console.error(e); alert('checkIn 실패: ' + (e.data?.message || e.message)); }
+};
+
+el('btnLate').onclick = async () => {
+  try {
+    const reason = el('reason').value || "";
+    const tx = await contract.connect(signer).checkIn(true, reason);
+    log('checkIn(late) tx: ' + tx.hash);
+    await tx.wait(); log('checkIn(late) confirmed');
+    await refreshContractInfo();
+  } catch (e) { console.error(e); alert('checkIn 실패: ' + (e.data?.message || e.message)); }
+};
+
+el('btnAbsent').onclick = async () => {
+  try {
+    const tx = await contract.connect(signer).declareAbsent();
+    log('declareAbsent tx: ' + tx.hash);
+    await tx.wait(); log('declareAbsent confirmed');
+    await refreshContractInfo();
+  } catch (e) { console.error(e); alert('declareAbsent 실패: ' + (e.data?.message || e.message)); }
+};
+
+el('btnVerify').onclick = async () => {
+  try {
+    const who = document.getElementById('verifyAddr').value.trim();
+    if (!ethers.utils.isAddress(who)) { alert('주소 형식이 아닙니다.'); return; }
+    const tx = await contract.connect(signer).verify(who);
+    log('verify tx: ' + tx.hash);
+    await tx.wait(); log('verify confirmed');
+    await refreshContractInfo();
+  } catch (e) { console.error(e); alert('verify 실패: ' + (e.data?.message || e.message)); }
+};
+
+el('btnFinalize').onclick = async () => {
+  try {
+    const tx = await contract.connect(signer).finalizeAndDistribute();
+    log('finalize tx: ' + tx.hash);
+    await tx.wait(); log('finalize confirmed');
+    await refreshContractInfo();
+  } catch (e) { console.error(e); alert('finalize 실패: ' + (e.data?.message || e.message)); }
+};
+
+el('btnTop3').onclick = async () => {
+  try {
+    const r = await contract.previewTop3();
+    const winners = r[0], scores = r[1];
+    el('top3').textContent =
+      `winners:\n  1) ${winners[0] || '-'}\n  2) ${winners[1] || '-'}\n  3) ${winners[2] || '-'}\n` +
+      `scores:\n  1) ${scores[0]}\n  2) ${scores[1]}\n  3) ${scores[2]}`;
+  } catch (e) { console.error(e); alert('Top3 조회 실패'); }
+};
+
+el('btnRefreshMe').onclick = () => refreshMe();
+
+// ------- Records (Events → Table) -------
+el('btnLoadRecords').onclick = async () => {
+  try {
+    if (!contract) { alert('컨트랙트부터 Load 하세요.'); return; }
+    log('이벤트 스캔 시작…');
+
+    const [joins, checks, absents, vers] = await Promise.all([
+      contract.queryFilter(contract.filters.Joined(),    0, 'latest'),
+      contract.queryFilter(contract.filters.CheckedIn(), 0, 'latest'),
+      contract.queryFilter(contract.filters.DeclaredAbsent(), 0, 'latest'),
+      contract.queryFilter(contract.filters.Verified(),  0, 'latest'),
+    ]);
+
+    const pset = new Set(joins.map(e => e.args.user.toLowerCase()));
+    const participants = Array.from(pset);
+
+    let maxDay = -1;
+    for (const e of checks)  maxDay = Math.max(maxDay, Number(e.args.dayIndex));
+    for (const e of absents) maxDay = Math.max(maxDay, Number(e.args.dayIndex));
+    if (maxDay < 0) {
+      el('records').innerHTML = '<div class="small">아직 기록이 없습니다.</div>';
+      return;
+    }
+
+    const key = (a,d)=>`${a.toLowerCase()}_${d}`;
+    const table = {};
+    for (const e of checks) {
+      const addr = e.args.user.toLowerCase();
+      const day  = Number(e.args.dayIndex);
+      const late = e.args.late;
+      table[key(addr,day)] = { status: late ? 'late' : 'on', verify: 0 };
+    }
+    for (const e of absents) {
+      const addr = e.args.user.toLowerCase();
+      const day  = Number(e.args.dayIndex);
+      table[key(addr,day)] = { status: 'absent', verify: 0 };
+    }
+    for (const e of vers) {
+      const addr = e.args.attendee.toLowerCase();
+      const day  = Number(e.args.dayIndex);
+      const k = key(addr,day);
+      if (!table[k]) table[k] = { status: undefined, verify: 0 };
+      table[k].verify = (table[k].verify || 0) + 1;
+    }
+
+    const cols = maxDay + 1;
+    let html = '<div style="overflow:auto"><table><thead><tr><th>Participant</th>';
+    for (let d=0; d<cols; d++) html += `<th>Day ${d}</th>`;
+    html += '</tr></thead><tbody>';
+
+    for (const addr of participants) {
+      html += `<tr><td class="mono">${addr}</td>`;
+      for (let d=0; d<cols; d++) {
+        const cell = table[key(addr,d)];
+        if (!cell || !cell.status) { html += `<td>-</td>`; continue; }
+        const tag = cell.status==='on' ? 'on' : (cell.status==='late' ? 'late' : 'absent');
+        const text = cell.status==='on' ? 'On-time' : (cell.status==='late' ? 'Late' : 'Absent');
+        const ver = (cell.verify || 0);
+        html += `<td class="tag ${tag}">${text}<br><span class="small">ver:${ver}</span></td>`;
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+
+    el('records').innerHTML = html;
+    log(`기록 완료: 참가자 ${participants.length}명, days ${cols}개`);
+  } catch (e) {
+    console.error(e); alert('기록 불러오기 실패: ' + (e.data?.message || e.message));
+  }
+};
+</script>
+</body>
+</html>
