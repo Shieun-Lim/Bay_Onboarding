@@ -1,0 +1,263 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/**
+ * AttendancePool v1.1a
+ * - durationSec: 라운드 전체 길이(초)
+ * - activeWindowSec: 정시 활성화 창(초) — 이 시간이 지나면 정시 체크인 금지, 지각만 허용
+ * - declareAbsent(): 정시 창 이후 결석 선언(그날 출석 종료)
+ * - finalizeAndDistribute(): 참가자 수가 1~2명일 때 남는 상금을 자동 재배치
+ * - 동점(모두 0점 포함)에서도 Top3가 항상 선정되도록 비교 초기 조건 보강
+ */
+
+import "https://raw.githubusercontent.com/OpenZeppelin/openzeppelin-contracts/v4.9.0/contracts/access/AccessControl.sol";
+import "https://raw.githubusercontent.com/OpenZeppelin/openzeppelin-contracts/v4.9.0/contracts/security/ReentrancyGuard.sol";
+import "https://raw.githubusercontent.com/OpenZeppelin/openzeppelin-contracts/v4.9.0/contracts/security/Pausable.sol";
+import "https://raw.githubusercontent.com/OpenZeppelin/openzeppelin-contracts/v4.9.0/contracts/token/ERC20/ERC20.sol";
+
+contract LateToken is ERC20, AccessControl {
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+    constructor() ERC20("LateToken", "LATE") { _grantRole(DEFAULT_ADMIN_ROLE, msg.sender); }
+    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) { _mint(to, amount); }
+}
+
+contract AttendancePool is AccessControl, ReentrancyGuard, Pausable {
+    // --- Config ---
+    uint256 public immutable startTime;       // 라운드 시작 시각(UNIX)
+    uint256 public immutable durationSec;     // 라운드 길이(초)
+    uint256 public immutable activeWindowSec; // 정시 활성화 창(초) — 예: 900(=15분)
+    uint256 public immutable stakeAmount;     // 예치금(wei)
+    uint256 public immutable requiredVerifiers;
+    uint256 public immutable p1; // 1등 %, 합계 100
+    uint256 public immutable p2; // 2등 %
+    uint256 public immutable p3; // 3등 %
+
+    uint256 public prizePool;
+    bool    public finalized;
+
+    LateToken public lateToken;
+
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+
+    struct Attendance {
+        bool checkedIn;        // 출석(정시/지각) 시 true
+        bool late;             // 지각 여부
+        bool declaredAbsent;   // 결석 선언 여부(정시 창 이후)
+        uint8 verifyCount;     // 동료 검증 수
+        mapping(address => bool) verifiedBy;
+    }
+    struct Participant {
+        bool joined;
+        uint16 totalVerified;  // 인정된 출석일 수(리더보드 점수)
+    }
+
+    mapping(address => Participant) public participants;
+    address[] public participantList;
+    mapping(address => mapping(uint256 => Attendance)) private _records; // user => dayIndex => rec
+
+    event Joined(address indexed user);
+    event CheckedIn(address indexed user, uint256 indexed dayIndex, bool late, string reason);
+    event DeclaredAbsent(address indexed user, uint256 indexed dayIndex);
+    event Verified(address indexed attendee, address indexed verifier, uint256 indexed dayIndex, uint8 verifyCount);
+    event DayCounted(address indexed attendee, uint256 indexed dayIndex, uint16 newTotalVerified);
+    event Finalized(address w1, uint256 w1Amt, address w2, uint256 w2Amt, address w3, uint256 w3Amt);
+
+    constructor(
+        uint256 _startTime,
+        uint256 _durationSec,
+        uint256 _activeWindowSec,  // <<— 정시 창
+        uint256 _stakeAmount,
+        uint256 _requiredVerifiers,
+        uint256 _p1, uint256 _p2, uint256 _p3
+    ) {
+        require(_durationSec > 0, "dur=0");
+        require(_activeWindowSec > 0 && _activeWindowSec <= _durationSec, "bad window");
+        require(_requiredVerifiers > 0, "verifiers=0");
+        require(_p1 + _p2 + _p3 == 100, "shares != 100");
+
+        startTime = _startTime;
+        durationSec = _durationSec;
+        activeWindowSec = _activeWindowSec;
+        stakeAmount = _stakeAmount;
+        requiredVerifiers = _requiredVerifiers;
+        p1 = _p1; p2 = _p2; p3 = _p3;
+
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(PAUSER_ROLE, msg.sender);
+
+        lateToken = new LateToken();
+        lateToken.grantRole(lateToken.MINTER_ROLE(), address(this));
+    }
+
+    // --- Helpers ---
+    modifier onlyDuringEpoch() {
+        require(block.timestamp >= startTime && block.timestamp < endTime(), "not in epoch");
+        _;
+    }
+    function endTime() public view returns (uint256) { return startTime + durationSec; }
+    function isActiveWindow() public view returns (bool) {
+        return block.timestamp >= startTime && block.timestamp < (startTime + activeWindowSec);
+    }
+    function currentDayIndex() public view returns (uint256) {
+        require(block.timestamp >= startTime && block.timestamp < endTime(), "out of range");
+        return (block.timestamp - startTime) / 1 days;
+    }
+
+    // --- Core ---
+    function join() external payable nonReentrant whenNotPaused {
+        require(block.timestamp < startTime, "epoch started");
+        require(msg.value == stakeAmount, "wrong stake");
+        Participant storage p = participants[msg.sender];
+        require(!p.joined, "already joined");
+
+        p.joined = true;
+        participantList.push(msg.sender);
+        prizePool += msg.value;
+        emit Joined(msg.sender);
+    }
+
+    // 정시 창: 정시/지각 모두 허용
+    // 정시 창 이후: 지각(late=true)만 허용
+    function checkIn(bool late, string calldata reason) external onlyDuringEpoch whenNotPaused {
+        Participant storage p = participants[msg.sender];
+        require(p.joined, "not joined");
+
+        uint256 day = currentDayIndex();
+        Attendance storage a = _records[msg.sender][day];
+        require(!a.checkedIn && !a.declaredAbsent, "already marked");
+
+        bool active = isActiveWindow();
+        if (!active) {
+            require(late == true, "on-time closed; late only");
+        }
+
+        a.checkedIn = true;
+        a.late = late;
+
+        if (late) { // 지각이면 LATE 1개 민팅
+            lateToken.mint(msg.sender, 1e18);
+        }
+
+        emit CheckedIn(msg.sender, day, late, reason);
+    }
+
+    // 정시 창 이후에만 결석 선언 가능(그날 최종 상태를 결석으로 고정)
+    function declareAbsent() external onlyDuringEpoch whenNotPaused {
+        require(!isActiveWindow(), "too early");
+        Participant storage p = participants[msg.sender];
+        require(p.joined, "not joined");
+
+        uint256 day = currentDayIndex();
+        Attendance storage a = _records[msg.sender][day];
+        require(!a.checkedIn && !a.declaredAbsent, "already marked");
+
+        a.declaredAbsent = true;
+        emit DeclaredAbsent(msg.sender, day);
+    }
+
+    function verify(address attendee) external onlyDuringEpoch whenNotPaused {
+        require(participants[msg.sender].joined, "verifier not eligible");
+        require(attendee != msg.sender, "no self-verify");
+        require(participants[attendee].joined, "attendee not joined");
+
+        uint256 day = currentDayIndex();
+        Attendance storage a = _records[attendee][day];
+        require(a.checkedIn, "attendee not checked-in"); // 결석자는 검증 불가
+        require(!a.verifiedBy[msg.sender], "already verified");
+
+        a.verifiedBy[msg.sender] = true;
+        a.verifyCount += 1;
+
+        emit Verified(attendee, msg.sender, day, a.verifyCount);
+
+        if (a.verifyCount == requiredVerifiers) {
+            participants[attendee].totalVerified += 1;
+            emit DayCounted(attendee, day, participants[attendee].totalVerified);
+        }
+    }
+
+    function finalizeAndDistribute() external nonReentrant {
+        require(block.timestamp >= endTime(), "epoch not ended");
+        require(!finalized, "finalized");
+
+        uint256 n = participantList.length;
+        address w1; address w2; address w3;
+        uint16 s1; uint16 s2; uint16 s3;
+
+        // Top3 선정 (초기값 고려: 전원 0점이어도 항상 채워지도록)
+        for (uint256 i = 0; i < n; i++) {
+            address addr = participantList[i];
+            uint16 s = participants[addr].totalVerified;
+
+            if (w1 == address(0) || s > s1 || (s == s1 && addr < w1)) {
+                w3 = w2; s3 = s2;
+                w2 = w1; s2 = s1;
+                w1 = addr; s1 = s;
+            } else if (w2 == address(0) || s > s2 || (s == s2 && addr < w2)) {
+                w3 = w2; s3 = s2;
+                w2 = addr; s2 = s;
+            } else if (w3 == address(0) || s > s3 || (s == s3 && addr < w3)) {
+                w3 = addr; s3 = s;
+            }
+        }
+
+        uint256 pool = prizePool;
+        finalized = true; // effects before interaction
+
+        uint256 amt1 = (pool * p1) / 100;
+        uint256 amt2 = (pool * p2) / 100;
+        uint256 amt3 = (pool * p3) / 100;
+
+        // [남는 상금 처리] 수상자 부재 몫 재배치
+        if (w2 == address(0)) { amt1 += amt2; amt2 = 0; }
+        if (w3 == address(0)) { if (w2 != address(0)) { amt2 += amt3; } else { amt1 += amt3; } amt3 = 0; }
+
+        if (w1 != address(0) && amt1 > 0) _payout(w1, amt1);
+        if (w2 != address(0) && amt2 > 0) _payout(w2, amt2);
+        if (w3 != address(0) && amt3 > 0) _payout(w3, amt3);
+
+        emit Finalized(w1, amt1, w2, amt2, w3, amt3);
+    }
+
+    function _payout(address to, uint256 amount) internal {
+        (bool ok, ) = to.call{value: amount}("");
+        require(ok, "payout failed");
+    }
+
+    // --- Views ---
+    function getAttendance(address user, uint256 dayIndex)
+        external view returns (bool checkedIn, bool late, bool absent, uint8 verifyCount)
+    {
+        Attendance storage a = _records[user][dayIndex];
+        return (a.checkedIn, a.late, a.declaredAbsent, a.verifyCount);
+    }
+
+    function previewTop3() external view returns (address[3] memory winners, uint16[3] memory scores) {
+        uint256 n = participantList.length;
+        address w1; address w2; address w3;
+        uint16 s1; uint16 s2; uint16 s3;
+
+        for (uint256 i = 0; i < n; i++) {
+            address addr = participantList[i];
+            uint16 s = participants[addr].totalVerified;
+
+            if (w1 == address(0) || s > s1 || (s == s1 && addr < w1)) {
+                w3 = w2; s3 = s2;
+                w2 = w1; s2 = s1;
+                w1 = addr; s1 = s;
+            } else if (w2 == address(0) || s > s2 || (s == s2 && addr < w2)) {
+                w3 = w2; s3 = s2;
+                w2 = addr; s2 = s;
+            } else if (w3 == address(0) || s > s3 || (s == s3 && addr < w3)) {
+                w3 = addr; s3 = s;
+            }
+        }
+        winners = [w1, w2, w3]; scores = [s1, s2, s3];
+    }
+
+    // --- Admin ---
+    function pause() external onlyRole(PAUSER_ROLE) { _pause(); }
+    function unpause() external onlyRole(PAUSER_ROLE) { _unpause(); }
+
+    receive() external payable {}
+}
