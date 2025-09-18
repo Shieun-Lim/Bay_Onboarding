@@ -1,70 +1,73 @@
-# Getting Started with Create React App
+# 🧑‍💻 블록체인 기반 출석 관리 DApp (Attendance DApp)
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+## ✨ 프로젝트 개요
 
-## Available Scripts
+이 프로젝트는 Ethereum 기반의 출석 관리 시스템을 구현한 분산 애플리케이션(DApp)입니다. 스마트 컨트랙트를 통해 투명하고 변조 불가능한 출석 기록을 생성하며, P2P 검증 시스템을 도입하여 출석의 신뢰도를 높입니다.
 
-In the project directory, you can run:
+### 📌 주요 특징
 
-### `npm start`
+* **P2P 출석 검증:** 모든 출석 기록은 최소 1명 이상의 다른 등록된 사용자에 의해 검증되어야 기록됩니다.
+* **시간 기반 출석 처리:** 정시 후 15분까지는 정상 출석, 그 이후는 지각 또는 결석으로 자동 기록됩니다.
+* **출석률 리더보드:** 프론트엔드에 실시간 출석률 상위 3명 목록을 표시합니다.
+* **불변의 로그 기록:** 모든 출석 및 검증 기록은 Sepolia Testnet 블록체인에 저장됩니다.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+---
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## 🛠️ 기술 스택 (Tech Stack)
 
-### `npm test`
+| 구분 | 기술 스택 | 설명 |
+| :--- | :--- | :--- |
+| **Blockchain** | Solidity (^0.8.0) | 스마트 컨트랙트 개발 언어 |
+| **Ethereum** | **Sepolia Testnet** | 컨트랙트 배포 및 테스트 네트워크 |
+| **Web3** | Ethers.js (v5.x) | 프론트엔드와 컨트랙트 연동 라이브러리 |
+| **Frontend** | React, JavaScript | 사용자 인터페이스 구축 |
+| **Tool** | Remix, VS Code | 개발 및 배포 환경 |
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+---
 
-### `npm run build`
+## 🚀 시작하는 방법 (Getting Started)
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### 1. 전제 조건
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+* Node.js
+* MetaMask (Sepolia 테스트넷 연결 및 잔액 확보)
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### 2. 설치 및 실행
 
-### `npm run eject`
+프로젝트 저장소를 클론하고 필요한 종속성을 설치합니다.
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+```bash
+# 1. 저장소 클론
+git clone [https://github.com/Shieun-Lim/Bay_Onboarding.git](https://github.com/Shieun-Lim/Bay_Onboarding.git)
+cd attendance-app-new
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+# 2. 종속성 설치
+npm install
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+# 3. 개발 서버 실행 (Chrome으로 자동 실행)
+npm start
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+<컨트랙트 정보>
+Contract Address 0x5E03BF9F6cD680C45A6f07Fde7EDd394cb573c03
+Network Sepolia Testnet
 
-## Learn More
+🧪 테스트 방법
+DApp의 모든 기능을 확인하기 위해 최소 2개의 MetaMask 계정(계정 A, 계정 B)을 준비하고 다음 순서를 따릅니다.
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+지갑 연결: DApp에 접속하여 MetaMask를 연결합니다.
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+계정 A (학생 역할):
 
-### Code Splitting
+이름을 입력하고 '학생 등록' 트랜잭션을 실행합니다.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+'출석 제출' 버튼을 눌러 출석 기록을 블록체인에 남깁니다.
 
-### Analyzing the Bundle Size
+계정 B (검증자 역할):
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+MetaMask에서 계정을 B로 전환합니다.
 
-### Making a Progressive Web App
+계정 B도 **'학생 등록'**을 완료합니다.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+'출석 로그 기록' 섹션에서 계정 A의 출석 기록을 찾아 '검증하기' 버튼을 클릭합니다.
 
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+결과 확인: 로그 기록에서 계정 A의 검증 횟수가 증가하고, 상위 3명 목록의 출석률이 업데이트되는지 확인합니다.
